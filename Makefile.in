@@ -1,0 +1,16 @@
+.PHONY: install
+install:
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 775 becky $(DESTDIR)$(PREFIX)/bin/becky
+	sed -i'' 's#^\(CONFIG_PATH=\).*#\1/etc/becky.conf#' $(DESTDIR)$(PREFIX)/bin/becky
+	install -d $(DESTDIR)/etc
+	install -m 600 becky.conf $(DESTDIR)/etc/becky.conf
+
+.PHONY: uninstall
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/becky
+
+.PHONY: purge
+purge:
+	rm -f $(DESTDIR)$(PREFIX)/bin/becky
+	rm -f /etc/becky.conf

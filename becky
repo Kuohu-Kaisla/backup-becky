@@ -1,0 +1,155 @@
+#!/bin/bash
+
+CONFIG_PATH="./becky.conf"
+
+###############################################################################
+# Declare some printing functions for prettier output.
+###############################################################################
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+print_error() {
+	printf "${RED}[ERROR]${NC} $*\n"
+}
+print_info() {
+	printf "${GREEN}[INFO]${NC} $*\n"
+}
+print_warn() {
+	printf "${GREEN}[WARN]${NC} $*\n"
+}
+
+pretty_time() {
+	((h = ${1} / 3600))
+	((m = (${1} % 3600) / 60))
+	((s = ${1} % 60))
+	printf "%02d:%02d:%02d\n" $h $m $s
+}
+
+###############################################################################
+# Cleanup after exit.
+###############################################################################
+
+cleanup() {
+	rm -f "$HOME/.becky.mylogin.cnf"
+}
+
+trap cleanup EXIT
+
+###############################################################################
+# Imports.
+###############################################################################
+
+if ! [ -f "${CONFIG_PATH}" ]; then
+	print_error "Config file not found: ${CONFIG_PATH}"
+	exit 1
+fi
+
+. ${CONFIG_PATH}
+
+###############################################################################
+# Ensure that dependencies are installed.
+###############################################################################
+
+DEPENDENCIES=(
+	"s3cmd"
+	"mysqldump"
+	"tar"
+	"gzip"
+	"date"
+	"cat"
+	"tr"
+)
+
+for dep in ${DEPENDENCIES[*]}; do
+	if ! command -v $dep &>/dev/null; then
+		print_error "Missing dependency: $dep"
+		exit 1
+	fi
+done
+
+###############################################################################
+# Ensure required variable in the becky.conf have been set.
+###############################################################################
+
+if [ -z $BECKY_S3_BUCKET ]; then
+	print_error "You have not set which S3 bucket to use: BECKY_S3_BUCKET"
+	print_info "Set the variable in ${CONFIG_PATH}"
+	exit 1
+fi
+
+###############################################################################
+# Create MySQL defaults file to use the credentials from there.
+###############################################################################
+
+cat <<EOF >$HOME/.becky.mylogin.cnf
+[client]
+user="$BECKY_MYSQL_USERNAME"
+password="$BECKY_MYSQL_PASSWORD"
+EOF
+
+###############################################################################
+# Print backup start time.
+###############################################################################
+
+BACKUP_START_TIME=$(date +%s)
+print_info "Backup started at: $(date -d @${BACKUP_START_TIME} -u -Is)"
+
+###############################################################################
+# Backup databases.
+###############################################################################
+
+if [ -z ${BECKY_MYSQL_DATABASES} ]; then
+	print_info "Skipping MySQL database backup because BECKY_MYSQL_DATABASES is not set..."
+else
+	print_info "Backing up databases..."
+
+	DATABASES=$(echo $BECKY_MYSQL_DATABASES | tr "," "\n")
+	for D in $DATABASES; do
+		FILE_NAME=${BECKY_PREFIX}${D}.tar.gz
+		print_info "Creating archive file: ${FILE_NAME}"
+		mysqldump --defaults-file="$HOME/.becky.mylogin.cnf" ${D} |
+			gzip -9 |
+			s3cmd put - s3://${BECKY_S3_BUCKET}${BECKY_DATABASES_DIRECTORY}/${FILE_NAME}
+	done
+fi
+
+###############################################################################
+# Backup files and folders.
+###############################################################################
+
+if [ -z ${BECKY_SOURCES} ]; then
+	print_info "Skipping file backup because BECKY_SOURCES is not set..."
+else
+	print_info "Archiving files and folders..."
+
+	FOLDERS=$(echo $BECKY_SOURCES | tr "," "\n")
+	for F in $FOLDERS; do
+		if ! [ -e "${F}" ]; then
+			print_error "File/directory does not exist: ${F}"
+			continue
+		fi
+		if [ -S "${F}" ]; then
+			print_error "You can't backup a socket: ${F}"
+			continue
+		fi
+		if ! [ -r "${F}" ]; then
+			print_error "No read permissions for: ${F}"
+			continue
+		fi
+		FILE_NAME=${BECKY_PREFIX}${F//\//_}.tar.gz
+		print_info "Creating archive file: ${FILE_NAME}"
+		tar cf - ${F} |
+			gzip -9 |
+			s3cmd put - s3://${BECKY_S3_BUCKET}${BECKY_FILES_DIRECTORY}/${FILE_NAME}
+	done
+fi
+
+sleep 5
+
+BACKUP_STOP_TIME=$(date +%s)
+print_info "Backup stopped at: $(date -d @${BACKUP_STOP_TIME} -u -Is)"
+BACKUP_TOTAL_TIME=$((BACKUP_STOP_TIME - BACKUP_START_TIME))
+print_info "Backup total time (HH:MM:SS): $(pretty_time ${BACKUP_TOTAL_TIME})"

@@ -4,7 +4,7 @@ install:
 	install -m 775 becky $(DESTDIR)$(PREFIX)/bin/becky
 	sed -i'' 's#^\(CONFIG_PATH=\).*#\1/etc/becky.conf#' $(DESTDIR)$(PREFIX)/bin/becky
 	install -d $(DESTDIR)/etc
-	if [ -f "$(DESTDIR)/etc/becky.conf" ]; then install -m 600 becky.conf $(DESTDIR)/etc/becky.conf; fi
+	if ! [ -f "$(DESTDIR)/etc/becky.conf" ]; then install -m 600 becky.conf $(DESTDIR)/etc/becky.conf; fi
 
 .PHONY: uninstall
 uninstall:

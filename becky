@@ -9,7 +9,7 @@ CONFIG_PATH="./becky.conf"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m' # No Color.
 
 print_error() {
 	printf "${RED}[ERROR]${NC} $*\n"
@@ -147,7 +147,9 @@ else
 	done
 fi
 
-sleep 5
+###############################################################################
+# Print backup stop time.
+###############################################################################
 
 BACKUP_STOP_TIME=$(date +%s)
 print_info "Backup stopped at: $(date -d @${BACKUP_STOP_TIME} -u -Is)"

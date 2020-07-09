@@ -233,7 +233,7 @@ else
 		tar -C '/' -cpf - ${F} |
 			gzip -9 |
 			aws s3 cp - \
-				${S3_PATH}} \
+				${S3_PATH} \
 				$EXPECTED_SIZE
 
 		FILE_UPLOAD_STOP_TIME=$(date +%s)

@@ -2,38 +2,38 @@
 
 Becky makes backing up your files and databases AWS S3 easy.
 
-## 💎 Requirements
+## 🔗 Requirements
 
-- [s3cmd](https://github.com/s3tools/s3cmd)
 - [AWS account](https://aws.amazon.com/)
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html)
 
 ## 👨‍💻 Install
 
-1. Install [s3cmd](https://github.com/s3tools/s3cmd).
+1. Install [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-linux.html).
 
     ```sh
-    sudo pip3 install s3cmd
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip awscliv2.zip
+    sudo ./aws/install
+    rm -rf aws awscliv2.zip
     ```
+
+    - See [AWS guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2-linux.html)
+        for uninstalling and removing.
 
 2. Install Becky.
 
     ```sh
-    configure --prefix=/usr/local
+    ./configure --prefix=/usr/local
     sudo make install
     ```
 
 ## 🚀 Getting Started
 
-1. Configure `s3cmd` with either the interactive tool `s3cmd --configure` or copy
-the config file to `~/.s3cfg`.
-    
-    - Ensure `~/.s3cfg` has `600` permissions since it contains sensitive information.
-    - See [s3tools.org](https://s3tools.org) for [example configuration file](https://s3tools.org/kb/item14.htm).
-
-2. Configure Becky by editing the config file in `/etc/becky.conf`.
+1. Configure Becky by editing the config file in `/etc/becky.conf`.
     - Ensure `/etc/becky.conf` has `600` permissions since it contains sensitive information.
 
-3. To backup your files run Becky.
+2. To backup your files run Becky.
 
     ```sh
     becky
@@ -56,3 +56,15 @@ Then you can e.g. add the following line to run Becky every Monday at 02:00 (2am
 ```
 0 02 * * 1 /usr/local/bin/becky
 ```
+
+## 👹 Caveats
+
+- You can not backup databases that are larger than `50GB`.
+- If you use `aws` CLI while Becky is running, the credentials and config
+    won't work because Becky temporarily replaces `~/.aws/config` and
+    `~/.aws/credentials`.
+
+## 🔨 Development
+
+You can create `./development.becky.conf` file and it will be read by `./becky`
+so you don't have to install it.

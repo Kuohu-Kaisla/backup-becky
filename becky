@@ -2,6 +2,10 @@
 
 CONFIG_PATH="./becky.conf"
 
+if [ -f "./development.becky.conf" ]; then
+	CONFIG_PATH="./development.becky.conf"
+fi
+
 ###############################################################################
 # Declare some printing functions for prettier output.
 ###############################################################################
@@ -18,7 +22,7 @@ print_info() {
 	printf "${GREEN}[INFO]${NC} $*\n"
 }
 print_warn() {
-	printf "${GREEN}[WARN]${NC} $*\n"
+	printf "${YELLOW}[WARN]${NC} $*\n"
 }
 
 pretty_time() {
@@ -33,7 +37,15 @@ pretty_time() {
 ###############################################################################
 
 cleanup() {
+	# Remove MySQL credentials.
 	rm -f "$HOME/.becky.mylogin.cnf"
+	# Move the original AWS config files back.
+	if [ -f ~/.aws/config.becky.backup ]; then
+		mv ~/.aws/config.becky.backup ~/.aws/config
+	fi
+	if [ -f ~/.aws/credentials.becky.backup ]; then
+		mv ~/.aws/credentials.becky.backup ~/.aws/credentials
+	fi
 }
 
 trap cleanup EXIT
@@ -54,8 +66,7 @@ fi
 ###############################################################################
 
 DEPENDENCIES=(
-	"s3cmd"
-	"mysqldump"
+	"aws"
 	"tar"
 	"gzip"
 	"date"
@@ -79,6 +90,52 @@ if [ -z $BECKY_S3_BUCKET ]; then
 	print_info "Set the variable in ${CONFIG_PATH}"
 	exit 1
 fi
+if [ -z $BECKY_AWS_REGION ]; then
+	print_error "You have not set the AWS region: BECKY_AWS_REGION"
+	print_info "Set the variable in ${CONFIG_PATH}"
+	exit 1
+fi
+if [ -z $BECKY_ACCESS_KEY_ID ]; then
+	print_error "You have not set the access key id: BECKY_ACCESS_KEY_ID"
+	print_info "Set the variable in ${CONFIG_PATH}"
+	exit 1
+fi
+if [ -z $BECKY_SECRET_ACCESS_KEY ]; then
+	print_error "You have not set the secret access key: BECKY_SECRET_ACCESS_KEY"
+	print_info "Set the variable in ${CONFIG_PATH}"
+	exit 1
+fi
+
+###############################################################################
+# Create AWS credentials and config.
+###############################################################################
+
+mkdir -p ~/.aws
+
+if [ -f ~/.aws/config ]; then
+	cp ~/.aws/config ~/.aws/config.becky.backup
+fi
+if [ -f ~/.aws/credentials ]; then
+	cp ~/.aws/credentials ~/.aws/credentials.becky.backup
+fi
+
+cat <<EOF >$HOME/.aws/config
+[default]
+region = $BECKY_AWS_REGION
+s3 =
+    multipart_treshold = $BECKY_UPLOAD_CHUNKSIZE
+    multipart_chunksize = $BECKY_UPLOAD_CHUNKSIZE
+    max_bandwidth = $BECKY_MAX_BANDWIDTH
+EOF
+
+cat <<EOF >$HOME/.aws/credentials
+[default]
+aws_access_key_id = $BECKY_ACCESS_KEY_ID
+aws_secret_access_key = $BECKY_SECRET_ACCESS_KEY
+EOF
+
+chmod 600 ~/.aws/config
+chmod 600 ~/.aws/credentials
 
 ###############################################################################
 # Create MySQL defaults file to use the credentials from there.
@@ -102,17 +159,25 @@ print_info "Backup started at: $(date -d @${BACKUP_START_TIME} -u -Is)"
 ###############################################################################
 
 if [ -z ${BECKY_MYSQL_DATABASES} ]; then
-	print_info "Skipping MySQL database backup because BECKY_MYSQL_DATABASES is not set..."
+	print_warn "Skipping MySQL database backup because BECKY_MYSQL_DATABASES is not set..."
 else
 	print_info "Backing up databases..."
 
 	DATABASES=$(echo $BECKY_MYSQL_DATABASES | tr "," "\n")
 	for D in $DATABASES; do
 		FILE_NAME=${BECKY_PREFIX}${D}.tar.gz
-		print_info "Creating archive file: ${FILE_NAME}"
+		S3_PATH="s3://${BECKY_S3_BUCKET}${BECKY_DATABASES_DIRECTORY}/${FILE_NAME}"
+
+		print_info "Creating archive: ${S3_PATH}"
+		FILE_UPLOAD_START_TIME=$(date +%s)
+
 		mysqldump --defaults-file="$HOME/.becky.mylogin.cnf" ${D} |
 			gzip -9 |
-			s3cmd put - s3://${BECKY_S3_BUCKET}${BECKY_DATABASES_DIRECTORY}/${FILE_NAME}
+			aws s3 cp - ${S3_PATH}
+
+		FILE_UPLOAD_STOP_TIME=$(date +%s)
+		FILE_UPLOAD_TOTAL_TIME=$((FILE_UPLOAD_STOP_TIME - FILE_UPLOAD_START_TIME))
+		print_info "Archive creation completed in (HH:MM:SS): $(pretty_time ${FILE_UPLOAD_TOTAL_TIME})"
 	done
 fi
 
@@ -121,7 +186,7 @@ fi
 ###############################################################################
 
 if [ -z ${BECKY_SOURCES} ]; then
-	print_info "Skipping file backup because BECKY_SOURCES is not set..."
+	print_warn "Skipping file backup because BECKY_SOURCES is not set..."
 else
 	print_info "Archiving files and folders..."
 
@@ -139,11 +204,41 @@ else
 			print_error "No read permissions for: ${F}"
 			continue
 		fi
+
+		# Strip the leading slash.
+		if [ ${F:0:1} = '/' ]; then
+			F=${F:1}
+		else
+			print_error "Not an absolute path: ${F}"
+			exit 1
+		fi
+
+		# Replace slashes with underscores.
 		FILE_NAME=${BECKY_PREFIX}${F//\//_}.tar.gz
-		print_info "Creating archive file: ${FILE_NAME}"
-		tar cf - ${F} |
+
+		S3_PATH="s3://${BECKY_S3_BUCKET}${BECKY_FILES_DIRECTORY}/${FILE_NAME}"
+
+		print_info "Creating archive: ${S3_PATH}"
+		FILE_UPLOAD_START_TIME=$(date +%s)
+
+		# Calculate approximate size of the archive so we can pass
+		# the --expected-size argument for archives larger than 50GB.
+		# See https://awscli.amazonaws.com/v2/documentation/api/latest/reference/s3/cp.html
+		ESTIMATED_SIZE=$(tar -C '/' -cpzf - "${F}" | wc -c)
+		EXPECTED_SIZE=""
+		if [ $ESTIMATED_SIZE -gt 50000000000 ]; then
+			EXPECTED_SIZE="--expected-size ${ESTIMATED_SIZE}"
+		fi
+
+		tar -C '/' -cpf - ${F} |
 			gzip -9 |
-			s3cmd put - s3://${BECKY_S3_BUCKET}${BECKY_FILES_DIRECTORY}/${FILE_NAME}
+			aws s3 cp - \
+				${S3_PATH}} \
+				$EXPECTED_SIZE
+
+		FILE_UPLOAD_STOP_TIME=$(date +%s)
+		FILE_UPLOAD_TOTAL_TIME=$((FILE_UPLOAD_STOP_TIME - FILE_UPLOAD_START_TIME))
+		print_info "Archive creation completed in (HH:MM:SS): $(pretty_time ${FILE_UPLOAD_TOTAL_TIME})"
 	done
 fi
 

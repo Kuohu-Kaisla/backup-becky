@@ -65,6 +65,9 @@ fi
 # Ensure that dependencies are installed.
 ###############################################################################
 
+# Ensure PATH is set (when running as CRON job the PATH is not set).
+PATH=$PATH:/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
 DEPENDENCIES=(
 	"aws"
 	"tar"

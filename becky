@@ -1,5 +1,7 @@
 #!/bin/bash
 
+VERSION="1.1.2"
+
 CONFIG_PATH="./becky.conf"
 
 if [ -f "./development.becky.conf" ]; then
@@ -49,6 +51,30 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+###############################################################################
+# Parse command line arguments.
+###############################################################################
+
+SHOW_VERSION=false
+
+while [[ $# -gt 0 ]]; do
+	key="$1"
+	case $key in
+		-v|--version)
+		SHOW_VERSION=true
+		shift # past argument
+		;;
+		*)    # unknown option
+		shift # past argument
+		;;
+	esac
+done
+
+if $SHOW_VERSION; then
+	echo $VERSION
+	exit 0
+fi
 
 ###############################################################################
 # Imports.
